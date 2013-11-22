@@ -1,24 +1,46 @@
-﻿namespace Disruptor.Dsl
+﻿using System.Threading;
+using System.Threading.Tasks;
+
+namespace Disruptor.Dsl
 {
-    internal class EventProcessorInfo<T>
+    internal class EventProcessorInfo<T> : IConsumerInfo
     {
+        private bool endOfChain = true;
+
         public EventProcessorInfo(IEventProcessor eventProcessor, IEventHandler<T> eventHandler, ISequenceBarrier sequenceBarrier)
         {
             EventProcessor = eventProcessor;
             EventHandler = eventHandler;
-            SequenceBarrier = sequenceBarrier;
-            IsEndOfChain = true;
+            Barrier = sequenceBarrier;
         }
 
         public IEventProcessor EventProcessor { get; private set; }
         public IEventHandler<T> EventHandler { get; private set; }
-        public ISequenceBarrier SequenceBarrier { get; private set; }
+        public ISequenceBarrier Barrier { get; private set; }
 
-        public bool IsEndOfChain { get; private set; }
+        public Sequence[] Sequences
+        {
+            get { return new[] { EventProcessor.Sequence }; }
+        }
+
+        public bool IsEndOfChain
+        {
+            get { return endOfChain; }
+        }
+
+        public void Start(TaskScheduler scheduler)
+        {
+            Task.Factory.StartNew(EventProcessor.Run, CancellationToken.None, TaskCreationOptions.None, scheduler);
+        }
+
+        public void Halt()
+        {
+            EventProcessor.Halt();
+        }
 
         public void MarkAsUsedInBarrier()
         {
-            IsEndOfChain = false;
+            endOfChain = false;
         }
     }
 }

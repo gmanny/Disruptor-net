@@ -102,8 +102,9 @@ namespace Disruptor.Tests.Dsl
             var countDownEvent = new CountdownEvent(2);
             IEventHandler<TestEvent> handlerWithBarrier = new EventHandlerStub(countDownEvent);
 
-            _disruptor.HandleEventsWith(handler1, handler2);
-            _disruptor.After(handler1).And(handler2).HandleEventsWith(handlerWithBarrier);
+            _disruptor.HandleEventsWith(handler1);
+            EventHandlerGroup<TestEvent> handler2Group = _disruptor.HandleEventsWith(handler2);
+            _disruptor.After(handler1).And(handler2Group).HandleEventsWith(handlerWithBarrier);
 
             EnsureTwoEventsProcessedAccordingToDependencies(countDownEvent, handler1, handler2);
         }
@@ -113,16 +114,6 @@ namespace Disruptor.Tests.Dsl
         public void ShouldThrowExceptionIfHandlerIsNotAlreadyConsuming()     
         {
             _disruptor.After(CreateDelayedEventHandler()).HandleEventsWith(CreateDelayedEventHandler());
-        }
-
-        [Test]
-        [ExpectedException(typeof(ArgumentException))]
-        public void ShouldThrowExceptionIfHandlerUsedWithAndIsNotAlreadyConsuming()        
-        {
-            var handler1 = CreateDelayedEventHandler();
-            var handler2 = CreateDelayedEventHandler();
-            _disruptor.HandleEventsWith(handler1);
-            _disruptor.After(handler1).And(handler2);
         }
 
         [Test]
@@ -155,34 +146,6 @@ namespace Disruptor.Tests.Dsl
 
             var actualException = WaitFor(wrappedException);
             Assert.AreEqual(testException, actualException);
-    }
-
-    [Test]
-    public void shouldBlockProducerUntilAllEventProcessorsHaveAdvanced()
-    {
-        var delayedEventHandler = CreateDelayedEventHandler();
-        _disruptor.HandleEventsWith(delayedEventHandler);
-
-        var ringBuffer = _disruptor.Start();
-
-        var stubPublisher = new StubPublisher(ringBuffer);
-        try {
-            _executor.execute(stubPublisher);
-
-            assertProducerReaches(stubPublisher, 4, true);
-
-            delayedEventHandler.processEvent();
-            delayedEventHandler.processEvent();
-            delayedEventHandler.processEvent();
-            delayedEventHandler.processEvent();
-            delayedEventHandler.processEvent();
-
-            assertProducerReaches(stubPublisher, 5, false);
-        }
-        finally
-        {
-            stubPublisher.halt();
-        }
     }
 
 

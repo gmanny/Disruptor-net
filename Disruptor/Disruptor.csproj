@@ -52,6 +52,9 @@
     <Compile Include="AlertException.cs" />
     <Compile Include="BlockingWaitStrategy.cs" />
     <Compile Include="BusySpinWaitStrategy.cs" />
+    <Compile Include="Dsl\ConsumerRepository.cs" />
+    <Compile Include="Dsl\IConsumerInfo.cs" />
+    <Compile Include="Dsl\WorkerPoolInfo.cs" />
     <Compile Include="InsufficientCapacityException.cs" />
     <Compile Include="Dsl\Disruptor.cs" />
     <Compile Include="Dsl\ExceptionHandlerSetting.cs" />
@@ -98,11 +101,7 @@
       <Name>Atomic</Name>
     </ProjectReference>
   </ItemGroup>
-  <ItemGroup>
-    <None Include="packages.config" />
-  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <Import Project="..\packages\GitInfoPlanter.1.5.0\build\GitInfoPlanter.targets" Condition="Exists('..\packages\GitInfoPlanter.1.5.0\build\GitInfoPlanter.targets')" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.
   <Target Name="BeforeBuild">

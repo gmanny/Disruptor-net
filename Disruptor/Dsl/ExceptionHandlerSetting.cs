@@ -6,13 +6,13 @@ namespace Disruptor.Dsl
     public class ExceptionHandlerSetting<T> where T : class
     {
         private readonly IEventHandler<T> _eventHandler;
-        private readonly EventProcessorRepository<T> _eventProcessorRepository;
+        private readonly ConsumerRepository<T> _consumerRepository;
 
         internal ExceptionHandlerSetting(IEventHandler<T> eventHandler,
-                                       EventProcessorRepository<T> eventProcessorRepository)
+                                         ConsumerRepository<T> consumerRepository)
         {
             _eventHandler = eventHandler;
-            _eventProcessorRepository = eventProcessorRepository;
+            _consumerRepository = consumerRepository;
         }
 
         /// <summary>
@@ -21,8 +21,8 @@ namespace Disruptor.Dsl
         /// <param name="exceptionHandler">the <see cref="IExceptionHandler"/> to use.</param>
         public void With(IExceptionHandler exceptionHandler)
         {
-            ((BatchEventProcessor<T>)_eventProcessorRepository.GetEventProcessorFor(_eventHandler)).SetExceptionHandler(exceptionHandler);
-            _eventProcessorRepository.GetBarrierFor(_eventHandler).Alert();
+            ((BatchEventProcessor<T>) _consumerRepository.GetEventProcessorFor(_eventHandler)).SetExceptionHandler(exceptionHandler);
+            _consumerRepository.GetBarrierFor(_eventHandler).Alert();
         }
     }
 }

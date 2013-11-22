@@ -1,12 +1,11 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 
 namespace Disruptor.Dsl
 {
-    internal class EventProcessorRepository<T> where T : class
+    internal class ConsumerRepository<T> where T : class
     {
         public class IdentityEqualityComparer<TKey> : IEqualityComparer<TKey> where TKey : class
         {
@@ -23,34 +22,50 @@ namespace Disruptor.Dsl
 
         private readonly IDictionary<IEventHandler<T>, EventProcessorInfo<T>> _eventProcessorInfoByHandler = 
             new Dictionary<IEventHandler<T>, EventProcessorInfo<T>>(new IdentityEqualityComparer<IEventHandler<T>>());
-        private readonly IDictionary<IEventProcessor, EventProcessorInfo<T>> _eventProcessorInfoByEventProcessor =
-            new Dictionary<IEventProcessor, EventProcessorInfo<T>>(new IdentityEqualityComparer<IEventProcessor>());
+        private readonly IDictionary<Sequence, IConsumerInfo> _eventProcessorInfoBySequence =
+            new Dictionary<Sequence, IConsumerInfo>(new IdentityEqualityComparer<Sequence>());
+        private readonly ICollection<IConsumerInfo> _consumerInfos = new List<IConsumerInfo>();
 
         public void Add(IEventProcessor eventProcessor, IEventHandler<T> eventHandler, ISequenceBarrier sequenceBarrier)
         {
             var eventProcessorInfo = new EventProcessorInfo<T>(eventProcessor, eventHandler, sequenceBarrier);
             _eventProcessorInfoByHandler[eventHandler] = eventProcessorInfo;
-            _eventProcessorInfoByEventProcessor[eventProcessor] = eventProcessorInfo;
+            _eventProcessorInfoBySequence[eventProcessor.Sequence] = eventProcessorInfo;
+            _consumerInfos.Add(eventProcessorInfo);
         }
 
         public void Add(IEventProcessor processor)
         {
             var eventProcessorInfo = new EventProcessorInfo<T>(processor, null, null);
-            _eventProcessorInfoByEventProcessor[processor] = eventProcessorInfo;
+            _eventProcessorInfoBySequence[processor.Sequence] = eventProcessorInfo;
+            _consumerInfos.Add(eventProcessorInfo);
         }
 
         public void Add(WorkerPool<T> workerPool, ISequenceBarrier sequenceBarrier)
         {
-            
+            WorkerPoolInfo<T> workerPoolInfo = new WorkerPoolInfo<T>(workerPool, sequenceBarrier);
+            _consumerInfos.Add(workerPoolInfo);
+            foreach (Sequence sequence in workerPool.WorkerSequences)
+            {
+                _eventProcessorInfoBySequence[sequence] = workerPoolInfo;
+            }
         }
 
-        public IEventProcessor[] LastEventProcessorsInChain
+        public Sequence[] LastSequenceInChain
         {
             get
             {
-                return (from eventProcessorInfo in _eventProcessorInfoByEventProcessor.Values
-                        where eventProcessorInfo.IsEndOfChain
-                        select eventProcessorInfo.EventProcessor).ToArray();
+                List<Sequence> result = new List<Sequence>();
+
+                foreach (IConsumerInfo consumerInfo in _consumerInfos)
+                {
+                    if (consumerInfo.IsEndOfChain)
+                    {
+                        result.AddRange(consumerInfo.Sequences);
+                    }
+                }
+
+                return result.ToArray();
             }
         }
 
@@ -65,17 +80,23 @@ namespace Disruptor.Dsl
             return eventProcessorInfo.EventProcessor;
         }
 
-        public void UnmarkEventProcessorsAsEndOfChain(IEnumerable<IEventProcessor> eventProcessors)
+        public Sequence GetSequenceFor(IEventHandler<T> handler)
         {
-            foreach (var eventProcessor in eventProcessors)
+            return GetEventProcessorFor(handler).Sequence;
+        }
+
+
+        public void UnmarkEventProcessorsAsEndOfChain(params Sequence[] barrierEventProcessors)
+        {
+            foreach (var barrierEventProcessor in barrierEventProcessors)
             {
-                _eventProcessorInfoByEventProcessor[eventProcessor].MarkAsUsedInBarrier();
+                GetEventProcessorInfo(barrierEventProcessor).MarkAsUsedInBarrier();
             }
         }
 
-        public IEnumerable<EventProcessorInfo<T>> EventProcessors
+        public IEnumerable<IConsumerInfo> EventProcessors
         {
-            get { return _eventProcessorInfoByHandler.Values; }
+            get { return _consumerInfos; }
         }
 
         public ISequenceBarrier GetBarrierFor(IEventHandler<T> handler)
@@ -89,9 +110,9 @@ namespace Disruptor.Dsl
             return _eventProcessorInfoByHandler[handler];
         }
 
-        private EventProcessorInfo<T> GetEventProcessorInfo(IEventProcessor barrierEventProcessor)
+        private IConsumerInfo GetEventProcessorInfo(Sequence barrierEventProcessor)
         {
-            return _eventProcessorInfoByEventProcessor[barrierEventProcessor];
+            return _eventProcessorInfoBySequence[barrierEventProcessor];
         }
     }
 }

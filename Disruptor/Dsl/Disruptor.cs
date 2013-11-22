@@ -16,7 +16,7 @@ namespace Disruptor.Dsl
 
         private readonly RingBuffer<T> _ringBuffer;
         private readonly TaskScheduler _taskScheduler;
-        private readonly EventProcessorRepository<T> _eventProcessorRepository = new EventProcessorRepository<T>();
+        private readonly ConsumerRepository<T> _consumerRepository = new ConsumerRepository<T>();
         private Volatile.Boolean _running = new Volatile.Boolean(Stopped);
         private readonly EventPublisher<T> _eventPublisher;
         private IExceptionHandler _exceptionHandler;
@@ -64,7 +64,7 @@ namespace Disruptor.Dsl
         /// <returns>a <see cref="EventHandlerGroup{T}"/> that can be used to chain dependencies.</returns>
         public EventHandlerGroup<T> HandleEventsWith(params IEventHandler<T>[] handlers)
         {
-            return CreateEventProcessors(new IEventProcessor[0], handlers);
+            return CreateEventProcessors(new Sequence[0], handlers);
         }
 
         /// <summary>
@@ -77,10 +77,22 @@ namespace Disruptor.Dsl
         {
             foreach (var eventProcessor in processors)
             {
-                _eventProcessorRepository.Add(eventProcessor);
+                _consumerRepository.Add(eventProcessor);
             }
 
-            return new EventHandlerGroup<T>(this, _eventProcessorRepository, processors);
+            return new EventHandlerGroup<T>(this, _consumerRepository, Util.GetSequencesFor(processors));
+        }
+
+        /// <summary>
+        /// Set up a <see cref="WorkerPool{T}"/> to distribute an event to one of a pool of work handler threads.
+        /// Each event will only be processed by one of the work handlers.
+        /// The Disruptor will automatically start this processors when <see cref="Disruptor{T}.Start"/> is called.
+        /// </summary>
+        /// <param name="workHandlers">the work handlers that will process events.</param>
+        /// <returns>a <see cref="EventHandlerGroup{T}"/> that can be used to chain dependencies.</returns>
+        public EventHandlerGroup<T> HandleEventsWithWorkerPool(params IWorkHandler<T>[] workHandlers)
+        {
+            return CreateWorkerPool(new Sequence[0], workHandlers);
         }
 
         /// <summary>
@@ -100,7 +112,7 @@ namespace Disruptor.Dsl
         /// <returns>an <see cref="ExceptionHandlerSetting{T}"/> dsl object - intended to be used by chaining the with method call.</returns>
         public ExceptionHandlerSetting<T> HandleExceptionsFor(IEventHandler<T> eventHandler)
         {
-            return new ExceptionHandlerSetting<T>(eventHandler, _eventProcessorRepository);
+            return new ExceptionHandlerSetting<T>(eventHandler, _consumerRepository);
         }
 
         /// <summary>
@@ -112,13 +124,13 @@ namespace Disruptor.Dsl
         /// <returns>an <see cref="EventHandlerGroup{T}"/> that can be used to setup a <see cref="ISequenceBarrier"/> over the specified <see cref="IEventHandler{T}"/>s.</returns>
         public EventHandlerGroup<T> After(params IEventHandler<T>[] handlers)
         {
-            var selectedEventProcessors = new IEventProcessor[handlers.Length];
+            Sequence[] sequences = new Sequence[handlers.Length];
             for (int i = 0; i < handlers.Length; i++)
             {
-                selectedEventProcessors[i] = _eventProcessorRepository.GetEventProcessorFor(handlers[i]);
+                sequences[i] = _consumerRepository.GetSequenceFor(handlers[i]);
             }
 
-            return new EventHandlerGroup<T>(this, _eventProcessorRepository, selectedEventProcessors);
+            return new EventHandlerGroup<T>(this, _consumerRepository, sequences);
         }
 
         /// <summary>
@@ -132,10 +144,10 @@ namespace Disruptor.Dsl
         {
             foreach (var eventProcessor in processors)
             {
-                _eventProcessorRepository.Add(eventProcessor);
+                _consumerRepository.Add(eventProcessor);
             }
 
-            return new EventHandlerGroup<T>(this, _eventProcessorRepository, processors);
+            return new EventHandlerGroup<T>(this, _consumerRepository, Util.GetSequencesFor(processors));
         }
 
         /// <summary>
@@ -156,15 +168,13 @@ namespace Disruptor.Dsl
         /// <returns>the configured <see cref="RingBuffer"/>.</returns>
         public RingBuffer<T> Start()
         {
-            var gatingProcessors = _eventProcessorRepository.LastEventProcessorsInChain;
-            _ringBuffer.SetGatingSequences(Util.GetSequencesFor(gatingProcessors));
+            Sequence[] gatingSequences = _consumerRepository.LastSequenceInChain;
+            _ringBuffer.SetGatingSequences(gatingSequences);
 
             CheckOnlyStartedOnce();
-            foreach (var eventProcessorInfo in _eventProcessorRepository.EventProcessors)
+            foreach (IConsumerInfo consumerInfo in _consumerRepository.EventProcessors)
             {
-                var eventProcessor = eventProcessorInfo.EventProcessor;
-
-                Task.Factory.StartNew(eventProcessor.Run, CancellationToken.None, TaskCreationOptions.None, _taskScheduler);
+                consumerInfo.Start(_taskScheduler);
             }
 
             return _ringBuffer;
@@ -175,9 +185,9 @@ namespace Disruptor.Dsl
         /// </summary>
         public void Halt()
         {
-            foreach (var eventProcessorInfo in _eventProcessorRepository.EventProcessors)
+            foreach (IConsumerInfo consumerInfo in _consumerRepository.EventProcessors)
             {
-                eventProcessorInfo.EventProcessor.Halt();
+                consumerInfo.Halt();
             }
         }
 
@@ -213,23 +223,21 @@ namespace Disruptor.Dsl
         /// <returns></returns>
         public ISequenceBarrier GetBarrierFor(IEventHandler<T> handler)
         {
-            return _eventProcessorRepository.GetBarrierFor(handler);
+            return _consumerRepository.GetBarrierFor(handler);
         }
 
         private bool HasBacklog()
         {
             long cursor = _ringBuffer.Cursor;
-            return _eventProcessorRepository.LastEventProcessorsInChain
-                                            .Any(eventProcessor => cursor != eventProcessor.Sequence.Value);
+            return _consumerRepository.LastSequenceInChain.Any(consumer => cursor > consumer.Value);
         }
 
-        internal EventHandlerGroup<T> CreateEventProcessors(IEventProcessor[] barrierEventProcessors,
-                                                   IEventHandler<T>[] eventHandlers)
+        internal EventHandlerGroup<T> CreateEventProcessors(Sequence[] barrierSequences, IEventHandler<T>[] eventHandlers)
         {
             CheckNotStarted();
 
-            var createdEventProcessors = new IEventProcessor[eventHandlers.Length];
-            ISequenceBarrier barrier = _ringBuffer.NewBarrier(Util.GetSequencesFor(barrierEventProcessors));
+            Sequence[] processorSequences = new Sequence[eventHandlers.Length];
+            ISequenceBarrier barrier = _ringBuffer.NewBarrier(barrierSequences);
 
             for (int i = 0; i <  eventHandlers.Length; i++)
             {
@@ -242,16 +250,24 @@ namespace Disruptor.Dsl
                     batchEventProcessor.SetExceptionHandler(_exceptionHandler);
                 }
 
-                _eventProcessorRepository.Add(batchEventProcessor, eventHandler, barrier);
-                createdEventProcessors[i] = batchEventProcessor;
+                _consumerRepository.Add(batchEventProcessor, eventHandler, barrier);
+                processorSequences[i] = batchEventProcessor.Sequence;
             }
 
-            if (createdEventProcessors.Length > 0)
+            if (processorSequences.Length > 0)
             {
-                _eventProcessorRepository.UnmarkEventProcessorsAsEndOfChain(barrierEventProcessors);
+                _consumerRepository.UnmarkEventProcessorsAsEndOfChain(barrierSequences);
             }
 
-            return new EventHandlerGroup<T>(this, _eventProcessorRepository, createdEventProcessors);
+            return new EventHandlerGroup<T>(this, _consumerRepository, processorSequences);
+        }
+
+        internal EventHandlerGroup<T> CreateWorkerPool(Sequence[] barrierSequences, IWorkHandler<T>[] workHandlers)
+        {
+            ISequenceBarrier sequenceBarrier = _ringBuffer.NewBarrier(barrierSequences);
+            WorkerPool<T> workerPool = new WorkerPool<T>(_ringBuffer, sequenceBarrier, _exceptionHandler, workHandlers);
+            _consumerRepository.Add(workerPool, sequenceBarrier);
+            return new EventHandlerGroup<T>(this, _consumerRepository, workerPool.WorkerSequences);
         }
 
         private void CheckNotStarted()
