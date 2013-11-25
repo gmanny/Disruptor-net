@@ -30,7 +30,7 @@ namespace Disruptor.Dsl
 
         public void Start(TaskScheduler scheduler)
         {
-            Task.Factory.StartNew(EventProcessor.Run, CancellationToken.None, TaskCreationOptions.None, scheduler);
+            Task.Factory.StartNew(EventProcessor.Run, CancellationToken.None, TaskCreationOptions.LongRunning, scheduler);
         }
 
         public void Halt()
