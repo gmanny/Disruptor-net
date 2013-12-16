@@ -1,4 +1,8 @@
-# .NET port of LMAX Disruptor
+# Fork of the .NET Disruptor with WorkerPool DSL support
+
+My fork is a Disruptor 2.10.1 to which I ported the support of WorkerPool in DSL from the latest Java Disruptor.
+
+## Readme of the original project
 
 This project aims to provide the full functionality of the Disruptor to CLR projects.
 
